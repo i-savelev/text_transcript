@@ -1,0 +1,22 @@
+[project]
+name = "text-transcript"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "i-savelev", email = "ilyasavelyev98@mail.ru" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "av<14.0.0",
+    "faster-whisper>=1.2.1",
+    "numpy>=2.5.3",
+    "tqdm>=4.70.1",
+]
+
+[project.scripts]
+text-transcript = "text_transcript:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
