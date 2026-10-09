@@ -6,6 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 from typing import List, Dict, Tuple, Any
 
+from tqdm import tqdm
 from faster_whisper import WhisperModel
 from logger import Logger
 
@@ -100,12 +101,13 @@ def _load_and_resample_audio(file_path: str) -> Tuple[np.ndarray, float]:
     return waveform, duration
 
 
-def _transcribe_waveform(waveform: np.ndarray, model: WhisperModel, language: str = "ru") -> List[Dict[str, Any]]:
+def _transcribe_waveform(waveform: np.ndarray, model: WhisperModel, duration: float, language: str = "ru") -> List[Dict[str, Any]]:
     """
-    Выполняет транскрибацию аудио и возвращает список сегментов.
+    Выполняет транскрибацию аудио и возвращает список сегментов с отображением прогресса.
 
     :param waveform: Массив аудиоданных (16kHz, mono, float32).
     :param model: Экземпляр загруженной модели WhisperModel.
+    :param duration: Общая длительность аудио в секундах (для прогресс-бара).
     :param language: Код языка для распознавания.
     :returns: Список словарей вида {'start': float, 'end': float, 'text': str}.
     """
@@ -116,7 +118,22 @@ def _transcribe_waveform(waveform: np.ndarray, model: WhisperModel, language: st
         vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200)
     )
-    return [{"start": seg.start, "end": seg.end, "text": seg.text.strip()} for seg in segments]
+    
+    result = []
+    last_end = 0.0
+    with tqdm(total=duration, unit="сек", desc="Транскрибация") as pbar:
+        for segment in segments:
+            result.append({
+                "start": segment.start, 
+                "end": segment.end, 
+                "text": segment.text.strip()
+            })
+            # Обновляем прогресс на основе конца текущего сегмента
+            update_step = max(0.0, segment.end - last_end)
+            pbar.update(update_step)
+            last_end = segment.end
+            
+    return result
 
 
 def _group_segments(segments: List[Dict[str, Any]], interval_seconds: int) -> List[Dict[str, Any]]:
@@ -173,7 +190,8 @@ def _save_transcription_to_txt(
     grouped_segments: List[Dict[str, Any]],
     metadata: Dict[str, Any],
     output_path: str,
-    transcription_date: str
+    transcription_date: str,
+    duration: float
 ) -> None:
     """
     Сохраняет транскрибацию и метаданные в текстовый файл.
@@ -182,23 +200,24 @@ def _save_transcription_to_txt(
     :param metadata: Словарь с метаданными файла.
     :param output_path: Полный путь для сохранения результата.
     :param transcription_date: Строка с датой и временем транскрибации.
+    :param duration: Общая длительность аудио в секундах.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        # Блок метаданных
+        # Блок метаданных (строго в вашем формате)
         f.write("=" * 60 + "\n")
         f.write("МЕТАДАННЫЕ ДОКУМЕНТА\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"Имя файла: {metadata['file_name']}\n")
         f.write(f"Формат: {metadata['file_ext']}\n")
         f.write(f"Размер: {_format_file_size(metadata['file_size'])}\n")
+        f.write(f"Длительность: {_format_duration(duration)} ({int(duration)} сек.)\n")
         f.write(f"Дата транскрибации: {transcription_date}\n")
         f.write(f"Модель распознавания: Whisper medium (beam_size=1)\n")
         f.write(f"Язык: русский\n")
-        f.write("ОПИСАНИЕ (заполнить вручную):\n")
-        f.write("[Описание содержания, темы, участников, контекста]\n")
-        f.write("ССЫЛКА НА ИСТОЧНИК (заполнить вручную):\n\n")
+        f.write("ОПИСАНИЕ:\n")
+        f.write("ССЫЛКА НА ИСТОЧНИК:\n\n")
         f.write("=" * 60 + "\n")
         f.write("ТЕКСТ ТРАНСКРИБАЦИИ\n")
         f.write("=" * 60 + "\n\n")
@@ -273,7 +292,7 @@ class AudioTranscriber:
         Logger.info(f"Аудио загружено. Длительность: {_format_duration(duration)}", name="AudioTranscriber")
 
         Logger.debug("Запуск транскрибации...", name="AudioTranscriber")
-        segments = _transcribe_waveform(waveform, self.model, self.language)
+        segments = _transcribe_waveform(waveform, self.model, duration, self.language)
 
         Logger.debug(f"Группировка по интервалам {self.interval_seconds} сек...", name="AudioTranscriber")
         grouped_segments = _group_segments(segments, self.interval_seconds)
@@ -282,7 +301,7 @@ class AudioTranscriber:
         output_path = os.path.join(self.output_dir, f"{base_name}.txt")
 
         Logger.debug(f"Сохранение результата в: {output_path}", name="AudioTranscriber")
-        _save_transcription_to_txt(grouped_segments, metadata, output_path, transcription_date)
+        _save_transcription_to_txt(grouped_segments, metadata, output_path, transcription_date, duration)
 
         elapsed = time.time() - start_time
         speed = duration / elapsed if duration > 0 else 0
@@ -340,5 +359,3 @@ if __name__ == "__main__":
     # Транскрибация всей папки:
     result_paths = transcriber.transcribe_directory(r"c:\Users\ilya\Downloads\video")
     Logger.info(f"Обработано файлов: {len(result_paths)}", name="main")
-
-    Logger.info("Демонстрационный запуск модуля выполнен (реальная обработка закомментирована).", name="main")
